@@ -1,0 +1,303 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Main stack for AWS Managed Grafana with CloudWatch and SNS integration"
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - uat
+      - prod
+    Description: Environment name
+
+  GrafanaAdminPassword:
+    Type: String
+    NoEcho: true
+    Description: Grafana admin password (min 12 chars, must contain uppercase, lowercase, digit, special char)
+    MinLength: 12
+    AllowedPattern: ^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{12,}$
+
+  AlertEmail:
+    Type: String
+    Description: Email address for alert notifications
+    AllowedPattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
+
+  SlackWebhookURL:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: (Optional) Slack webhook URL for alerts
+
+  SSOProvider:
+    Type: String
+    Default: NONE
+    AllowedValues:
+      - NONE
+      - SAML
+      - OAUTH2_GOOGLE
+      - OAUTH2_GITHUB
+      - OAUTH2_AZURE
+    Description: SSO provider to use for Grafana
+
+  SSOConfigURL:
+    Type: String
+    Default: ""
+    Description: (Optional) SSO configuration URL/endpoint
+
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: CloudWatch Log retention period in days
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Environment Configuration"
+        Parameters:
+          - EnvironmentName
+      - Label:
+          default: "Grafana Configuration"
+        Parameters:
+          - GrafanaAdminPassword
+          - SSOProvider
+          - SSOConfigURL
+      - Label:
+          default: "Notification Configuration"
+        Parameters:
+          - AlertEmail
+          - SlackWebhookURL
+      - Label:
+          default: "CloudWatch Configuration"
+        Parameters:
+          - LogRetentionDays
+    ParameterLabels:
+      EnvironmentName:
+        default: "Environment Name"
+      GrafanaAdminPassword:
+        default: "Grafana Admin Password"
+      AlertEmail:
+        default: "Alert Email Address"
+      SlackWebhookURL:
+        default: "Slack Webhook URL (Optional)"
+      SSOProvider:
+        default: "SSO Provider"
+      SSOConfigURL:
+        default: "SSO Configuration URL"
+      LogRetentionDays:
+        default: "Log Retention Days"
+
+Resources:
+  # ============================================
+  # Nested Stack - IAM Roles
+  # ============================================
+  IAMRolesStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      StackName: !Sub "${AWS::StackName}-iam-roles"
+      TemplateURL: !Sub "file://${AWS::StackId}/../templates/05-iam-roles.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+      TimeoutInMinutes: 10
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: ParentStack
+          Value: !Ref AWS::StackName
+
+  # ============================================
+  # Nested Stack - SNS Topics
+  # ============================================
+  SNSStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: IAMRolesStack
+    Properties:
+      StackName: !Sub "${AWS::StackName}-sns"
+      TemplateURL: !Sub "file://${AWS::StackId}/../templates/04-sns-stack.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        AlertEmail: !Ref AlertEmail
+        SlackWebhookURL: !Ref SlackWebhookURL
+      TimeoutInMinutes: 10
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: ParentStack
+          Value: !Ref AWS::StackName
+
+  # ============================================
+  # Nested Stack - CloudWatch
+  # ============================================
+  CloudWatchStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: SNSStack
+    Properties:
+      StackName: !Sub "${AWS::StackName}-cloudwatch"
+      TemplateURL: !Sub "file://${AWS::StackId}/../templates/03-cloudwatch-stack.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        LogRetentionDays: !Ref LogRetentionDays
+        GrafanaAlertsSNSTopicArn: !GetAtt SNSStack.Outputs.GrafanaAlertsTopicArn
+      TimeoutInMinutes: 15
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: ParentStack
+          Value: !Ref AWS::StackName
+
+  # ============================================
+  # Nested Stack - Grafana
+  # ============================================
+  GrafanaStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - IAMRolesStack
+      - CloudWatchStack
+    Properties:
+      StackName: !Sub "${AWS::StackName}-grafana"
+      TemplateURL: !Sub "file://${AWS::StackId}/../templates/02-grafana-stack.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        GrafanaAdminPassword: !Ref GrafanaAdminPassword
+        SSOProvider: !Ref SSOProvider
+        SSOConfigURL: !Ref SSOConfigURL
+        NotificationChannelEmail: !Ref AlertEmail
+        LambdaPluginInstallationRoleArn: !GetAtt IAMRolesStack.Outputs.LambdaPluginExecutionRoleArn
+        LambdaSSOSetupRoleArn: !GetAtt IAMRolesStack.Outputs.LambdaSSOExecutionRoleArn
+        LambdaCFNRoleArn: !GetAtt IAMRolesStack.Outputs.LambdaCFNExecutionRoleArn
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: ParentStack
+          Value: !Ref AWS::StackName
+
+  # ============================================
+  # Store deployment metadata in Parameter Store
+  # ============================================
+  DeploymentMetadataParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/grafana/${EnvironmentName}/deployment-metadata"
+      Type: String
+      Value: !Sub |
+        {
+          "deployment_time": "${AWS::StackName}",
+          "environment": "${EnvironmentName}",
+          "sso_provider": "${SSOProvider}",
+          "parent_stack": "${AWS::StackName}",
+          "region": "${AWS::Region}",
+          "account_id": "${AWS::AccountId}"
+        }
+      Description: Grafana deployment metadata
+      Tags:
+        Environment: !Ref EnvironmentName
+
+Outputs:
+  # ============================================
+  # Main Stack Outputs
+  # ============================================
+  StackName:
+    Description: Name of this stack
+    Value: !Ref AWS::StackName
+    Export:
+      Name: !Sub "${AWS::StackName}-StackName"
+
+  EnvironmentName:
+    Description: Environment name
+    Value: !Ref EnvironmentName
+    Export:
+      Name: !Sub "${AWS::StackName}-EnvironmentName"
+
+  Region:
+    Description: AWS Region
+    Value: !Ref AWS::Region
+    Export:
+      Name: !Sub "${AWS::StackName}-Region"
+
+  # ============================================
+  # IAM Stack Outputs
+  # ============================================
+  GrafanaServiceRoleArn:
+    Description: ARN of Grafana Service Role
+    Value: !GetAtt IAMRolesStack.Outputs.GrafanaServiceRoleArn
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaServiceRoleArn"
+
+  # ============================================
+  # SNS Stack Outputs
+  # ============================================
+  GrafanaAlertsTopicArn:
+    Description: ARN of Grafana Alerts SNS Topic
+    Value: !GetAtt SNSStack.Outputs.GrafanaAlertsTopicArn
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaAlertsTopicArn"
+
+  GrafanaCriticalAlertsTopicArn:
+    Description: ARN of Grafana Critical Alerts SNS Topic
+    Value: !GetAtt SNSStack.Outputs.GrafanaCriticalAlertsTopicArn
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaCriticalAlertsTopicArn"
+
+  # ============================================
+  # CloudWatch Stack Outputs
+  # ============================================
+  ApplicationLogGroupName:
+    Description: Name of Application Log Group
+    Value: !GetAtt CloudWatchStack.Outputs.ApplicationLogGroupName
+    Export:
+      Name: !Sub "${AWS::StackName}-ApplicationLogGroupName"
+
+  GrafanaLogGroupName:
+    Description: Name of Grafana Log Group
+    Value: !GetAtt CloudWatchStack.Outputs.GrafanaLogGroupName
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaLogGroupName"
+
+  ApplicationMetricsDashboardURL:
+    Description: URL to CloudWatch Application Metrics Dashboard
+    Value: !GetAtt CloudWatchStack.Outputs.ApplicationMetricsDashboardURL
+
+  SystemMetricsDashboardURL:
+    Description: URL to CloudWatch System Metrics Dashboard
+    Value: !GetAtt CloudWatchStack.Outputs.SystemMetricsDashboardURL
+
+  # ============================================
+  # Grafana Stack Outputs
+  # ============================================
+  GrafanaWorkspaceId:
+    Description: ID of Grafana Workspace
+    Value: !GetAtt GrafanaStack.Outputs.GrafanaWorkspaceId
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaWorkspaceId"
+
+  GrafanaWorkspaceURL:
+    Description: URL to access Grafana
+    Value: !GetAtt GrafanaStack.Outputs.GrafanaWorkspaceURL
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaWorkspaceURL"
+
+  GrafanaAdminPasswordSecretArn:
+    Description: ARN of Secret containing Grafana admin credentials
+    Value: !GetAtt GrafanaStack.Outputs.GrafanaAdminPasswordSecretArn
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaAdminPasswordSecretArn"
+
+  GrafanaAPIKeySecretArn:
+    Description: ARN of Secret containing Grafana API Key
+    Value: !GetAtt GrafanaStack.Outputs.GrafanaAPIKeySecretArn
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaAPIKeySecretArn"
+
+  # ============================================
+  # Deployment Information
+  # ============================================
+  DeploymentGuideURL:
+    Description: URL to deployment guide
+    Value: "https://github.com/mikhailyesman-pet/platform_grafana_cognizant#usage"
+
+  SupportEmail:
+    Description: Support contact
+    Value: "mikhail.yesman@gmail.com"

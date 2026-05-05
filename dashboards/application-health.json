@@ -1,0 +1,140 @@
+{
+  "dashboard": {
+    "title": "Application Health",
+    "tags": ["application", "health", "monitoring"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Status",
+        "type": "stat",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/ApplicationELB",
+            "metricName": "HealthyHostCount",
+            "stat": "Average",
+            "period": "300"
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 0,
+          "w": 8,
+          "h": 6
+        },
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "color": "red",
+              "value": 0
+            },
+            {
+              "color": "yellow",
+              "value": 1
+            },
+            {
+              "color": "green",
+              "value": 2
+            }
+          ]
+        }
+      },
+      {
+        "id": 2,
+        "title": "Unhealthy Hosts",
+        "type": "stat",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/ApplicationELB",
+            "metricName": "UnHealthyHostCount",
+            "stat": "Average",
+            "period": "300"
+          }
+        ],
+        "gridPos": {
+          "x": 8,
+          "y": 0,
+          "w": 8,
+          "h": 6
+        },
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "color": "green",
+              "value": 0
+            },
+            {
+              "color": "red",
+              "value": 1
+            }
+          ]
+        }
+      },
+      {
+        "id": 3,
+        "title": "Request Count",
+        "type": "graph",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/ApplicationELB",
+            "metricName": "RequestCount",
+            "stat": "Sum",
+            "period": "60"
+          }
+        ],
+        "gridPos": {
+          "x": 16,
+          "y": 0,
+          "w": 8,
+          "h": 6
+        }
+      },
+      {
+        "id": 4,
+        "title": "Response Time (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/ApplicationELB",
+            "metricName": "TargetResponseTime",
+            "stat": "p95",
+            "period": "60"
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 6,
+          "w": 12,
+          "h": 8
+        }
+      },
+      {
+        "id": 5,
+        "title": "Error Rate (4xx + 5xx)",
+        "type": "graph",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/ApplicationELB",
+            "metricName": "HTTPCode_Target_5XX_Count",
+            "stat": "Sum",
+            "period": "60"
+          }
+        ],
+        "gridPos": {
+          "x": 12,
+          "y": 6,
+          "w": 12,
+          "h": 8
+        }
+      }
+    ]
+  }
+}

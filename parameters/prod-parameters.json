@@ -1,0 +1,30 @@
+[
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "prod"
+  },
+  {
+    "ParameterKey": "GrafanaAdminPassword",
+    "ParameterValue": "ProdPassword123!@#"
+  },
+  {
+    "ParameterKey": "AlertEmail",
+    "ParameterValue": "prod-alerts@example.com"
+  },
+  {
+    "ParameterKey": "SlackWebhookURL",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "SSOProvider",
+    "ParameterValue": "OAUTH2_AZURE"
+  },
+  {
+    "ParameterKey": "SSOConfigURL",
+    "ParameterValue": "https://login.microsoftonline.com/your-tenant-id/oauth2/v2.0"
+  },
+  {
+    "ParameterKey": "LogRetentionDays",
+    "ParameterValue": "90"
+  }
+]

@@ -1,0 +1,291 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "IAM Roles and Policies for Grafana and Lambda Functions"
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - uat
+      - prod
+    Description: Environment name
+
+Resources:
+  # ============================================
+  # Grafana Service Role
+  # ============================================
+  GrafanaServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: grafana.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+      Policies:
+        - PolicyName: GrafanaMetricsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:DescribeAlarmsForMetric
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/grafana/*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:grafana-*"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: Purpose
+          Value: Grafana-Service-Role
+
+  # ============================================
+  # Lambda Execution Role for Plugin Installation
+  # ============================================
+  LambdaPluginExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: GrafanaPluginAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - grafana:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/grafana/*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:grafana/*"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # ============================================
+  # Lambda Execution Role for SSO Setup
+  # ============================================
+  LambdaSSOExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: GrafanaSSOAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - grafana:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:UpdateSecret
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:grafana/*"
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/grafana/*"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # ============================================
+  # Lambda Execution Role for Dashboard Deployment
+  # ============================================
+  LambdaDashboardExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: GrafanaDashboardAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - grafana:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "arn:aws:s3:::grafana-${AWS::AccountId}/*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:grafana/*"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # ============================================
+  # Lambda Execution Role for Alerts Setup
+  # ============================================
+  LambdaAlertsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: GrafanaAlertsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - grafana:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:grafana-*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:grafana/*"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # ============================================
+  # Lambda Execution Role for CloudFormation
+  # ============================================
+  LambdaCFNExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CloudFormationCustomResourceAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:SignalResource
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - grafana:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:grafana/*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:*"
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+Outputs:
+  GrafanaServiceRoleArn:
+    Description: ARN of Grafana Service Role
+    Value: !GetAtt GrafanaServiceRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaServiceRoleArn"
+
+  GrafanaServiceRoleName:
+    Description: Name of Grafana Service Role
+    Value: !Ref GrafanaServiceRole
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaServiceRoleName"
+
+  LambdaPluginExecutionRoleArn:
+    Description: ARN of Lambda Plugin Execution Role
+    Value: !GetAtt LambdaPluginExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaPluginExecutionRoleArn"
+
+  LambdaSSOExecutionRoleArn:
+    Description: ARN of Lambda SSO Execution Role
+    Value: !GetAtt LambdaSSOExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaSSOExecutionRoleArn"
+
+  LambdaDashboardExecutionRoleArn:
+    Description: ARN of Lambda Dashboard Execution Role
+    Value: !GetAtt LambdaDashboardExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaDashboardExecutionRoleArn"
+
+  LambdaAlertsExecutionRoleArn:
+    Description: ARN of Lambda Alerts Execution Role
+    Value: !GetAtt LambdaAlertsExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaAlertsExecutionRoleArn"
+
+  LambdaCFNExecutionRoleArn:
+    Description: ARN of Lambda CloudFormation Execution Role
+    Value: !GetAtt LambdaCFNExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaCFNExecutionRoleArn"

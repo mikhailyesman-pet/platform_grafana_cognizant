@@ -1,0 +1,101 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# AWS
+.aws/
+aws-cli-commands.txt
+
+# Secrets and credentials
+*.pem
+*.key
+*.pfx
+*.p12
+secrets.json
+.env
+.env.local
+credentials.json
+private.key
+cert.cer
+chain.cer
+
+# Logs
+*.log
+logs/
+*.out
+
+# CloudFormation
+cfn-lint-output.txt
+cfn-lint-report.html
+
+# Node
+node_modules/
+npm-debug.log
+package-lock.json
+
+# Parameters
+parameters/*.json.bak
+parameters/*.json.local
+
+# Dashboards backup
+dashboards/*.bak
+dashboards/*.backup
+
+# Coverage
+htmlcov/
+.coverage
+.pytest_cache/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.~*
+
+# Generated files
+outputs/
+results/
+reports/
+
+# Git
+.gitignore.local

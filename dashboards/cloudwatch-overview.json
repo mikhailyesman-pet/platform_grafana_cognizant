@@ -1,0 +1,65 @@
+{
+  "dashboard": {
+    "title": "CloudWatch Overview",
+    "tags": ["cloudwatch", "monitoring"],
+    "timezone": "browser",
+    "refresh": "1m",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Alarms",
+        "type": "stat",
+        "targets": [
+          {
+            "refId": "A",
+            "accountId": "$__user.grafanaDefaultOrgId",
+            "namespace": "AWS/ApplicationAutoScaling"
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 0,
+          "w": 6,
+          "h": 6
+        }
+      },
+      {
+        "id": 2,
+        "title": "Failed Invocations",
+        "type": "stat",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/Lambda",
+            "metricName": "Errors",
+            "stat": "Sum"
+          }
+        ],
+        "gridPos": {
+          "x": 6,
+          "y": 0,
+          "w": 6,
+          "h": 6
+        }
+      },
+      {
+        "id": 3,
+        "title": "CloudWatch Log Insights Errors",
+        "type": "logs",
+        "targets": [
+          {
+            "refId": "A",
+            "logGroupNames": ["/aws/lambda/"],
+            "expression": "fields @timestamp, @message | filter @message like /ERROR/ | stats count()"
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 6,
+          "w": 24,
+          "h": 8
+        }
+      }
+    ]
+  }
+}

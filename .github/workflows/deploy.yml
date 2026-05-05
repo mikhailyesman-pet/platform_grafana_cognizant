@@ -1,0 +1,266 @@
+name: Deploy Grafana Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'templates/**'
+      - 'parameters/**'
+      - 'dashboards/**'
+      - 'alerts/**'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - uat
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: grafana-observability
+
+jobs:
+  # ============================================
+  # Validate CloudFormation Templates
+  # ============================================
+  validate-templates:
+    name: Validate CloudFormation Templates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install cfn-lint
+        run: pip install cfn-lint
+
+      - name: Lint CloudFormation templates
+        run: |
+          cfn-lint templates/*.yaml
+          echo "CloudFormation templates validation passed ✓"
+
+      - name: Validate templates with AWS CLI
+        run: |
+          for template in templates/*.yaml; do
+            echo "Validating $template..."
+            aws cloudformation validate-template --template-body file://$template
+          done
+
+      - name: Check parameter files
+        run: |
+          for params in parameters/*.json; do
+            echo "Checking $params..."
+            jq . $params > /dev/null
+            echo "✓ Valid JSON: $params"
+          done
+
+  # ============================================
+  # Deploy to dev (automatic on push to main)
+  # ============================================
+  deploy-dev:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    needs: validate-templates
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment: dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check if stack exists
+        id: check-stack
+        run: |
+          if aws cloudformation describe-stacks --stack-name "${{ env.STACK_NAME }}-dev" 2>/dev/null; then
+            echo "stack_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "stack_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create/Update CloudFormation stack
+        run: |
+          if [ "${{ steps.check-stack.outputs.stack_exists }}" == "true" ]; then
+            echo "Updating existing stack..."
+            aws cloudformation update-stack \
+              --stack-name "${{ env.STACK_NAME }}-dev" \
+              --template-body file://templates/01-main-stack.yaml \
+              --parameters file://parameters/dev-parameters.json \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "Creating new stack..."
+            aws cloudformation create-stack \
+              --stack-name "${{ env.STACK_NAME }}-dev" \
+              --template-body file://templates/01-main-stack.yaml \
+              --parameters file://parameters/dev-parameters.json \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --region ${{ env.AWS_REGION }}
+          fi
+
+      - name: Wait for stack operation to complete
+        run: |
+          if [ "${{ steps.check-stack.outputs.stack_exists }}" == "true" ]; then
+            aws cloudformation wait stack-update-complete \
+              --stack-name "${{ env.STACK_NAME }}-dev" \
+              --region ${{ env.AWS_REGION }}
+          else
+            aws cloudformation wait stack-create-complete \
+              --stack-name "${{ env.STACK_NAME }}-dev" \
+              --region ${{ env.AWS_REGION }}
+          fi
+          echo "Stack deployment completed successfully ✓"
+
+      - name: Get stack outputs
+        id: stack-outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${{ env.STACK_NAME }}-dev" \
+            --query 'Stacks[0].Outputs' \
+            --output table \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deploy dashboards to Grafana
+        env:
+          GRAFANA_URL: ${{ steps.stack-outputs.outputs.GrafanaWorkspaceURL }}
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
+        run: |
+          echo "Deploying dashboards..."
+          python scripts/deploy-dashboards.py \
+            --grafana-url "$GRAFANA_URL" \
+            --api-key "$GRAFANA_API_KEY" \
+            --dashboards-dir dashboards/
+          echo "Dashboards deployed ✓"
+
+      - name: Setup alerts in Grafana
+        env:
+          GRAFANA_URL: ${{ steps.stack-outputs.outputs.GrafanaWorkspaceURL }}
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
+        run: |
+          echo "Setting up alerts..."
+          python scripts/setup-alerts.py \
+            --grafana-url "$GRAFANA_URL" \
+            --api-key "$GRAFANA_API_KEY" \
+            --alerts-dir alerts/
+          echo "Alerts configured ✓"
+
+      - name: Post deployment summary
+        if: always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ Dev deployment completed successfully!'
+            })
+
+  # ============================================
+  # Deploy to UAT (requires approval)
+  # ============================================
+  deploy-uat:
+    name: Deploy to UAT
+    runs-on: ubuntu-latest
+    needs: validate-templates
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'uat'
+    environment: uat
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create/Update CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file templates/01-main-stack.yaml \
+            --stack-name "${{ env.STACK_NAME }}-uat" \
+            --parameter-overrides file://parameters/uat-parameters.json \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset
+
+      - name: Deploy dashboards to Grafana
+        env:
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL_UAT }}
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY_UAT }}
+        run: |
+          python scripts/deploy-dashboards.py \
+            --grafana-url "$GRAFANA_URL" \
+            --api-key "$GRAFANA_API_KEY" \
+            --dashboards-dir dashboards/
+
+  # ============================================
+  # Deploy to Production (requires approval)
+  # ============================================
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: validate-templates
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    environment: prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create/Update CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file templates/01-main-stack.yaml \
+            --stack-name "${{ env.STACK_NAME }}-prod" \
+            --parameter-overrides file://parameters/prod-parameters.json \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset
+
+      - name: Deploy dashboards to Grafana
+        env:
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL_PROD }}
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY_PROD }}
+        run: |
+          python scripts/deploy-dashboards.py \
+            --grafana-url "$GRAFANA_URL" \
+            --api-key "$GRAFANA_API_KEY" \
+            --dashboards-dir dashboards/
+
+      - name: Post deployment notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: 'Production deployment completed!'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        if: always()

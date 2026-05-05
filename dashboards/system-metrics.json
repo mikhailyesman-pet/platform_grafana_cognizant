@@ -1,0 +1,94 @@
+{
+  "dashboard": {
+    "title": "System Metrics",
+    "tags": ["system", "metrics"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "CPU Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/EC2",
+            "metricName": "CPUUtilization",
+            "stat": "Average",
+            "period": "300",
+            "dimensions": {}
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 0,
+          "w": 12,
+          "h": 8
+        }
+      },
+      {
+        "id": 2,
+        "title": "Memory Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/ApplicationELB",
+            "metricName": "TargetResponseTime",
+            "stat": "Average",
+            "period": "300",
+            "dimensions": {}
+          }
+        ],
+        "gridPos": {
+          "x": 12,
+          "y": 0,
+          "w": 12,
+          "h": 8
+        }
+      },
+      {
+        "id": 3,
+        "title": "Disk I/O",
+        "type": "graph",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/EBS",
+            "metricName": "VolumeReadOps",
+            "stat": "Sum",
+            "period": "300",
+            "dimensions": {}
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 8,
+          "w": 12,
+          "h": 8
+        }
+      },
+      {
+        "id": 4,
+        "title": "Network Traffic",
+        "type": "graph",
+        "targets": [
+          {
+            "refId": "A",
+            "namespace": "AWS/EC2",
+            "metricName": "NetworkIn",
+            "stat": "Sum",
+            "period": "300",
+            "dimensions": {}
+          }
+        ],
+        "gridPos": {
+          "x": 12,
+          "y": 8,
+          "w": 12,
+          "h": 8
+        }
+      }
+    ]
+  }
+}

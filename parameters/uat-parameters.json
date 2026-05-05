@@ -1,0 +1,30 @@
+[
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "uat"
+  },
+  {
+    "ParameterKey": "GrafanaAdminPassword",
+    "ParameterValue": "UATPassword123!@#"
+  },
+  {
+    "ParameterKey": "AlertEmail",
+    "ParameterValue": "uat-alerts@example.com"
+  },
+  {
+    "ParameterKey": "SlackWebhookURL",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "SSOProvider",
+    "ParameterValue": "OAUTH2_AZURE"
+  },
+  {
+    "ParameterKey": "SSOConfigURL",
+    "ParameterValue": "https://login.microsoftonline.com/your-tenant-id/oauth2/v2.0"
+  },
+  {
+    "ParameterKey": "LogRetentionDays",
+    "ParameterValue": "30"
+  }
+]

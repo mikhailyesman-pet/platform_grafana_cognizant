@@ -1,0 +1,276 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudWatch Configuration for Observability"
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - uat
+      - prod
+    Description: Environment name
+
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: Log retention in days
+
+  GrafanaAlertsSNSTopicArn:
+    Type: String
+    Description: SNS Topic ARN for Grafana alerts
+
+Resources:
+  # ============================================
+  # Log Groups
+  # ============================================
+  GrafanaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/grafana/application
+      RetentionInDays: !Ref LogRetentionDays
+
+  GrafanaAPILogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/grafana/api
+      RetentionInDays: !Ref LogRetentionDays
+
+  CloudWatchAlarmLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/grafana/alarms
+      RetentionInDays: !Ref LogRetentionDays
+
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/application/${EnvironmentName}"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ============================================
+  # Metric Filters
+  # ============================================
+  ErrorMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroup
+      FilterPattern: "[ERROR]"
+      MetricTransformations:
+        - MetricName: ErrorCount
+          MetricNamespace: !Sub "grafana/${EnvironmentName}/application"
+          MetricValue: "1"
+          DefaultValue: 0
+
+  WarningMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroup
+      FilterPattern: "[WARN]"
+      MetricTransformations:
+        - MetricName: WarningCount
+          MetricNamespace: !Sub "grafana/${EnvironmentName}/application"
+          MetricValue: "1"
+          DefaultValue: 0
+
+  GrafanaAPIErrorMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref GrafanaAPILogGroup
+      FilterPattern: "[level = ERROR]"
+      MetricTransformations:
+        - MetricName: APIErrors
+          MetricNamespace: !Sub "grafana/${EnvironmentName}/api"
+          MetricValue: "1"
+          DefaultValue: 0
+
+  # ============================================
+  # Custom Metrics Alarms
+  # ============================================
+  HighErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "grafana-${EnvironmentName}-high-error-rate"
+      AlarmDescription: Alert when error count is high
+      MetricName: ErrorCount
+      Namespace: !Sub "grafana/${EnvironmentName}/application"
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref GrafanaAlertsSNSTopicArn
+      TreatMissingData: notBreaching
+
+  HighAPIErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "grafana-${EnvironmentName}-api-error-rate"
+      AlarmDescription: Alert when Grafana API errors are high
+      MetricName: APIErrors
+      Namespace: !Sub "grafana/${EnvironmentName}/api"
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref GrafanaAlertsSNSTopicArn
+      TreatMissingData: notBreaching
+
+  # ============================================
+  # Composite Alarms
+  # ============================================
+  ApplicationHealthAlarm:
+    Type: AWS::CloudWatch::CompositeAlarm
+    Properties:
+      AlarmName: !Sub "grafana-${EnvironmentName}-application-health"
+      AlarmDescription: Composite alarm for application health
+      AlarmRule: !Sub |
+        (ALARM(${HighErrorRateAlarm}))
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref GrafanaAlertsSNSTopicArn
+
+  # ============================================
+  # Dashboard - Application Metrics
+  # ============================================
+  ApplicationMetricsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "grafana-${EnvironmentName}-app-metrics"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  [ "grafana/${EnvironmentName}/application", "ErrorCount", { "stat": "Sum", "label": "Errors" } ],
+                  [ ".", "WarningCount", { "stat": "Sum", "label": "Warnings" } ],
+                  [ "grafana/${EnvironmentName}/api", "APIErrors", { "stat": "Sum", "label": "API Errors" } ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Application Health Metrics",
+                "yAxis": { "left": { "min": 0 } }
+              }
+            },
+            {
+              "type": "log",
+              "properties": {
+                "query": "fields @timestamp, @message | filter @message like /ERROR/ | stats count() as error_count by bin(5m)",
+                "region": "${AWS::Region}",
+                "title": "Error Logs - Last 24 Hours"
+              }
+            }
+          ]
+        }
+
+  # ============================================
+  # Dashboard - System Metrics
+  # ============================================
+  SystemMetricsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "grafana-${EnvironmentName}-system-metrics"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  [ "AWS/CloudWatch", "CallCount", { "stat": "Sum" } ]
+                ],
+                "period": 60,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "CloudWatch API Calls"
+              }
+            }
+          ]
+        }
+
+  # ============================================
+  # CloudWatch Insights Query Definitions
+  # ============================================
+  ErrorTrendQuery:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "grafana-${EnvironmentName}-error-trend"
+      QueryString: |
+        fields @timestamp, @message, @logStream
+        | filter @message like /ERROR/
+        | stats count() as error_count by @logStream, bin(5m)
+        | sort @timestamp desc
+      LogGroupNames:
+        - !Ref ApplicationLogGroup
+
+  LatencyAnalysisQuery:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: !Sub "grafana-${EnvironmentName}-latency-analysis"
+      QueryString: |
+        fields @duration
+        | filter @duration > 1000
+        | stats avg(@duration) as avg_duration, max(@duration) as max_duration, pct(@duration, 95) as p95_duration
+      LogGroupNames:
+        - !Ref ApplicationLogGroup
+
+  # ============================================
+  # Store Dashboard Information in Parameter Store
+  # ============================================
+  ApplicationMetricsDashboardNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /grafana/dashboards/application-metrics
+      Type: String
+      Value: !Sub "grafana-${EnvironmentName}-app-metrics"
+      Description: CloudWatch Dashboard for Application Metrics
+      Tags:
+        Environment: !Ref EnvironmentName
+
+  SystemMetricsDashboardNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /grafana/dashboards/system-metrics
+      Type: String
+      Value: !Sub "grafana-${EnvironmentName}-system-metrics"
+      Description: CloudWatch Dashboard for System Metrics
+      Tags:
+        Environment: !Ref EnvironmentName
+
+Outputs:
+  GrafanaLogGroupName:
+    Description: Name of Grafana Application Log Group
+    Value: !Ref GrafanaLogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaLogGroupName"
+
+  ApplicationLogGroupName:
+    Description: Name of Application Log Group
+    Value: !Ref ApplicationLogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ApplicationLogGroupName"
+
+  ApplicationMetricsDashboardURL:
+    Description: URL to Application Metrics Dashboard
+    Value: !Sub "https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=grafana-${EnvironmentName}-app-metrics"
+
+  SystemMetricsDashboardURL:
+    Description: URL to System Metrics Dashboard
+    Value: !Sub "https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=grafana-${EnvironmentName}-system-metrics"
+
+  ErrorMetricFilterName:
+    Description: Name of Error Metric Filter
+    Value: !Ref ErrorMetricFilter
+
+  HighErrorRateAlarmArn:
+    Description: ARN of High Error Rate Alarm
+    Value: !GetAtt HighErrorRateAlarm.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-HighErrorRateAlarmArn"

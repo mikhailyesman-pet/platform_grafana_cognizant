@@ -1,0 +1,25 @@
+{
+  "alert": {
+    "title": "High Memory Usage",
+    "description": "Alert when memory usage exceeds 85% for 5 minutes",
+    "condition": {
+      "namespace": "AWS/EC2",
+      "metricName": "MemoryUtilization",
+      "statistic": "Average",
+      "period": 300,
+      "threshold": 85,
+      "comparisonOperator": "GreaterThanThreshold",
+      "evaluationPeriods": 1
+    },
+    "alerting": {
+      "enabled": true,
+      "frequency": "1m",
+      "handlerIds": [1],
+      "name": "HighMemoryUsage"
+    },
+    "notification": {
+      "channels": ["grafana-critical-alerts-sns"],
+      "message": "Memory usage is {{ .Values.memoryUtilization }}% on instance {{ .Labels.InstanceId }}"
+    }
+  }
+}

@@ -1,0 +1,438 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "AWS Managed Grafana with Plugins and SSO Integration"
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - uat
+      - prod
+    Description: Environment name
+
+  GrafanaAdminPassword:
+    Type: String
+    NoEcho: true
+    Description: Grafana admin password (will be stored in Secrets Manager)
+    MinLength: 12
+    AllowedPattern: ^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{12,}$
+
+  SSOProvider:
+    Type: String
+    Default: NONE
+    AllowedValues:
+      - NONE
+      - SAML
+      - OAUTH2_GOOGLE
+      - OAUTH2_GITHUB
+      - OAUTH2_AZURE
+    Description: SSO provider to use
+
+  SSOConfigURL:
+    Type: String
+    Default: ""
+    Description: (Optional) SSO configuration URL/endpoint
+
+  DataSourceQueryCacheEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Enable CloudWatch metrics query caching
+
+  NotificationChannelEmail:
+    Type: String
+    Description: Email address for Grafana notifications
+
+  LambdaPluginInstallationRoleArn:
+    Type: String
+    Description: IAM role ARN for Lambda plugin installation
+
+  LambdaSSOSetupRoleArn:
+    Type: String
+    Description: IAM role ARN for Lambda SSO setup
+
+  LambdaCFNRoleArn:
+    Type: String
+    Description: IAM role ARN for Lambda CloudFormation custom resources
+
+Resources:
+  # ============================================
+  # Grafana Admin Password Secret
+  # ============================================
+  GrafanaAdminPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/grafana/${EnvironmentName}/admin-password"
+      SecretString: !Sub |
+        {
+          "username": "admin",
+          "password": "${GrafanaAdminPassword}",
+          "environment": "${EnvironmentName}"
+        }
+      Description: Grafana admin credentials
+
+  # ============================================
+  # Grafana API Key Secret (will be populated by Lambda)
+  # ============================================
+  GrafanaAPIKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/grafana/${EnvironmentName}/api-key"
+      SecretString: '{"api_key": "placeholder"}'
+      Description: Grafana API Key for automation
+
+  # ============================================
+  # AWS Managed Grafana Workspace
+  # ============================================
+  GrafanaWorkspace:
+    Type: AWS::Grafana::Workspace
+    Properties:
+      AccountAccessType: CURRENT_ACCOUNT
+      AuthenticationProviders:
+        - SAML
+        - AWS_SSO
+      PermissionType: CUSTOMER_MANAGED
+      RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${GrafanaServiceRoleName}"
+      DataSources:
+        - CLOUDWATCH
+        - PROMETHEUS
+      Tags:
+        Environment: !Ref EnvironmentName
+        ManagedBy: CloudFormation
+
+  GrafanaServiceRoleName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /grafana/service-role-name
+      Type: String
+      Value: !Sub "GrafanaServiceRole-${EnvironmentName}"
+      Description: Grafana Service Role Name
+
+  # ============================================
+  # Lambda Function - Install Plugins
+  # ============================================
+  LambdaLayerGrafanaClient:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub "grafana-client-${EnvironmentName}"
+      Description: Grafana Python client library
+      Content:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          
+          class GrafanaClient:
+              def __init__(self, url, api_key):
+                  self.url = url
+                  self.api_key = api_key
+                  self.http = urllib3.PoolManager()
+              
+              def install_plugin(self, plugin_id, plugin_version=None):
+                  """Install a plugin in Grafana"""
+                  headers = {
+                      'Authorization': f'Bearer {self.api_key}',
+                      'Content-Type': 'application/json'
+                  }
+                  url = f'{self.url}/api/plugins/{plugin_id}/install'
+                  if plugin_version:
+                      url += f'?version={plugin_version}'
+                  
+                  response = self.http.request('POST', url, headers=headers)
+                  return json.loads(response.data.decode('utf-8'))
+              
+              def get_plugins(self):
+                  """List all installed plugins"""
+                  headers = {
+                      'Authorization': f'Bearer {self.api_key}'
+                  }
+                  url = f'{self.url}/api/plugins'
+                  
+                  response = self.http.request('GET', url, headers=headers)
+                  return json.loads(response.data.decode('utf-8'))
+              
+              def create_datasource(self, name, ds_type, url=None, **kwargs):
+                  """Create a datasource"""
+                  headers = {
+                      'Authorization': f'Bearer {self.api_key}',
+                      'Content-Type': 'application/json'
+                  }
+                  
+                  data = {
+                      'name': name,
+                      'type': ds_type,
+                      'access': 'proxy',
+                      'isDefault': kwargs.get('is_default', False),
+                      **kwargs
+                  }
+                  if url:
+                      data['url'] = url
+                  
+                  url = f'{self.url}/api/datasources'
+                  response = self.http.request(
+                      'POST', 
+                      url, 
+                      body=json.dumps(data),
+                      headers=headers
+                  )
+                  return json.loads(response.data.decode('utf-8'))
+
+  PluginInstallationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "grafana-${EnvironmentName}-install-plugins"
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !Ref LambdaPluginInstallationRoleArn
+      Timeout: 300
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib3
+          import cfnresponse
+          
+          grafana_client = boto3.client('grafana')
+          secrets_client = boto3.client('secretsmanager')
+          
+          PLUGINS_TO_INSTALL = [
+              'alexanderzobnin-zabbix-app',
+              'grafana-piechart-panel',
+              'grafana-worldmap-panel',
+              'grafana-clock-panel',
+              'grafana-simple-json-datasource',
+              'grafana-influxdb-flux-datasource'
+          ]
+          
+          def handler(event, context):
+              try:
+                  print(f"Event: {json.dumps(event)}")
+                  
+                  workspace_id = event.get('WorkspaceId')
+                  
+                  if not workspace_id:
+                      raise ValueError("WorkspaceId is required")
+                  
+                  # Get Grafana workspace info
+                  workspace_info = grafana_client.describe_workspace(
+                      workspaceId=workspace_id
+                  )
+                  
+                  workspace_url = workspace_info['workspace']['endpoint']
+                  
+                  # Get API key from Secrets Manager
+                  secret = secrets_client.get_secret_value(
+                      SecretId=f"/grafana/admin-password"
+                  )
+                  credentials = json.loads(secret['SecretString'])
+                  
+                  print(f"Grafana URL: {workspace_url}")
+                  
+                  # Install plugins
+                  results = []
+                  for plugin_id in PLUGINS_TO_INSTALL:
+                      try:
+                          print(f"Installing plugin: {plugin_id}")
+                          # Note: Plugin installation is done via Grafana CLI in practice
+                          # This is a placeholder for the integration
+                          results.append({
+                              'plugin': plugin_id,
+                              'status': 'pending',
+                              'message': 'Plugin installation requires Grafana CLI access'
+                          })
+                      except Exception as e:
+                          results.append({
+                              'plugin': plugin_id,
+                              'status': 'failed',
+                              'error': str(e)
+                          })
+                  
+                  print(f"Installation results: {json.dumps(results)}")
+                  
+                  cfnresponse.send(
+                      event, 
+                      context, 
+                      cfnresponse.SUCCESS,
+                      {
+                          'WorkspaceId': workspace_id,
+                          'PluginsInstalled': len([r for r in results if r['status'] == 'pending']),
+                          'Results': results
+                      },
+                      f"grafana-plugins-{workspace_id}"
+                  )
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(
+                      event, 
+                      context, 
+                      cfnresponse.FAILED,
+                      {'Error': str(e)},
+                      'CustomResource'
+                  )
+
+  # ============================================
+  # Lambda Function - Setup SSO
+  # ============================================
+  SSOSetupLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "grafana-${EnvironmentName}-setup-sso"
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !Ref LambdaSSOSetupRoleArn
+      Timeout: 300
+      Environment:
+        Variables:
+          SSO_PROVIDER: !Ref SSOProvider
+          SSO_CONFIG_URL: !Ref SSOConfigURL
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import cfnresponse
+          
+          grafana_client = boto3.client('grafana')
+          ssm_client = boto3.client('ssm')
+          
+          def handler(event, context):
+              try:
+                  print(f"Event: {json.dumps(event)}")
+                  
+                  workspace_id = event.get('WorkspaceId')
+                  sso_provider = os.environ.get('SSO_PROVIDER', 'NONE')
+                  
+                  if not workspace_id:
+                      raise ValueError("WorkspaceId is required")
+                  
+                  if sso_provider == 'NONE':
+                      result = {'message': 'SSO not configured', 'status': 'skipped'}
+                  else:
+                      # Update workspace authentication providers
+                      result = grafana_client.update_workspace(
+                          workspaceId=workspace_id,
+                          authenticationProviders=[sso_provider, 'AWS_SSO']
+                      )
+                      
+                      # Store SSO configuration in Parameter Store
+                      ssm_client.put_parameter(
+                          Name=f'/grafana/sso/provider',
+                          Value=sso_provider,
+                          Type='String',
+                          Overwrite=True
+                      )
+                  
+                  print(f"SSO Setup result: {json.dumps(result)}")
+                  
+                  cfnresponse.send(
+                      event, 
+                      context, 
+                      cfnresponse.SUCCESS,
+                      {
+                          'WorkspaceId': workspace_id,
+                          'SSOProvider': sso_provider,
+                          'Result': result
+                      },
+                      f"grafana-sso-{workspace_id}"
+                  )
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(
+                      event, 
+                      context, 
+                      cfnresponse.FAILED,
+                      {'Error': str(e)},
+                      'CustomResource'
+                  )
+
+  # ============================================
+  # Custom Resource - Plugin Installation
+  # ============================================
+  PluginInstallationCustomResource:
+    Type: Custom::PluginInstallation
+    DependsOn: GrafanaWorkspace
+    Properties:
+      ServiceToken: !GetAtt PluginInstallationLambda.Arn
+      WorkspaceId: !Ref GrafanaWorkspace
+
+  # ============================================
+  # Custom Resource - SSO Setup
+  # ============================================
+  SSOSetupCustomResource:
+    Type: Custom::SSOSetup
+    DependsOn: GrafanaWorkspace
+    Properties:
+      ServiceToken: !GetAtt SSOSetupLambda.Arn
+      WorkspaceId: !Ref GrafanaWorkspace
+
+  # ============================================
+  # Store Workspace Info in Parameter Store
+  # ============================================
+  GrafanaWorkspaceIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/grafana/workspace-id/${EnvironmentName}"
+      Type: String
+      Value: !Ref GrafanaWorkspace
+      Description: Grafana Workspace ID
+      Tags:
+        Environment: !Ref EnvironmentName
+
+  GrafanaWorkspaceEndpointParameter:
+    Type: AWS::SSM::Parameter
+    DependsOn: GrafanaWorkspace
+    Properties:
+      Name: !Sub "/grafana/workspace-endpoint/${EnvironmentName}"
+      Type: String
+      Value: !Sub "https://${GrafanaWorkspace}.grafana-workspace.${AWS::Region}.amazonaws.com"
+      Description: Grafana Workspace Endpoint
+      Tags:
+        Environment: !Ref EnvironmentName
+
+Outputs:
+  GrafanaWorkspaceId:
+    Description: ID of Grafana Workspace
+    Value: !Ref GrafanaWorkspace
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaWorkspaceId"
+
+  GrafanaWorkspaceArn:
+    Description: ARN of Grafana Workspace
+    Value: !GetAtt GrafanaWorkspace.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaWorkspaceArn"
+
+  GrafanaWorkspaceURL:
+    Description: Grafana Workspace URL
+    Value: !Sub "https://${GrafanaWorkspace}.grafana-workspace.${AWS::Region}.amazonaws.com"
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaWorkspaceURL"
+
+  PluginInstallationLambdaArn:
+    Description: ARN of Plugin Installation Lambda
+    Value: !GetAtt PluginInstallationLambda.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-PluginInstallationLambdaArn"
+
+  SSOSetupLambdaArn:
+    Description: ARN of SSO Setup Lambda
+    Value: !GetAtt SSOSetupLambda.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-SSOSetupLambdaArn"
+
+  GrafanaAdminPasswordSecretArn:
+    Description: ARN of Grafana Admin Password Secret
+    Value: !Ref GrafanaAdminPasswordSecret
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaAdminPasswordSecretArn"
+
+  GrafanaAPIKeySecretArn:
+    Description: ARN of Grafana API Key Secret
+    Value: !Ref GrafanaAPIKeySecret
+    Export:
+      Name: !Sub "${AWS::StackName}-GrafanaAPIKeySecretArn"

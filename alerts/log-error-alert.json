@@ -1,0 +1,25 @@
+{
+  "alert": {
+    "title": "Application Errors Detected",
+    "description": "Alert when error count exceeds 10 in last 5 minutes",
+    "condition": {
+      "namespace": "grafana/application",
+      "metricName": "ErrorCount",
+      "statistic": "Sum",
+      "period": 300,
+      "threshold": 10,
+      "comparisonOperator": "GreaterThanThreshold",
+      "evaluationPeriods": 1
+    },
+    "alerting": {
+      "enabled": true,
+      "frequency": "1m",
+      "handlerIds": [1],
+      "name": "ApplicationErrorsDetected"
+    },
+    "notification": {
+      "channels": ["grafana-alerts-sns"],
+      "message": "{{ .Values.errorCount }} errors detected in last 5 minutes. Check logs at: {{ .Values.logGroupLink }}"
+    }
+  }
+}
