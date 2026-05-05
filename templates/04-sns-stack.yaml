@@ -7,20 +7,12 @@ Parameters:
     Default: dev
     AllowedValues:
       - dev
-      - uat
-      - prod
     Description: Environment name
 
   AlertEmail:
     Type: String
     Description: Email address for alert notifications
     AllowedPattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
-
-  SlackWebhookURL:
-    Type: String
-    NoEcho: true
-    Default: ""
-    Description: (Optional) Slack webhook URL for alerts
 
 Resources:
   # ============================================
@@ -38,54 +30,12 @@ Resources:
           Value: Grafana-Alerts
 
   # ============================================
-  # SNS Topic for Critical Alerts
-  # ============================================
-  GrafanaCriticalAlertsTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub "grafana-critical-alerts-${EnvironmentName}"
-      DisplayName: Grafana Critical Alerts
-      Tags:
-        - Key: Environment
-          Value: !Ref EnvironmentName
-        - Key: Purpose
-          Value: Grafana-Critical-Alerts
-
-  # ============================================
-  # SNS Topic for Health Checks
-  # ============================================
-  GrafanaHealthCheckTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub "grafana-health-checks-${EnvironmentName}"
-      DisplayName: Grafana Health Checks
-      Tags:
-        - Key: Environment
-          Value: !Ref EnvironmentName
-        - Key: Purpose
-          Value: Grafana-Health-Checks
-
-  # ============================================
   # Email Subscriptions
   # ============================================
   AlertEmailSubscription:
     Type: AWS::SNS::Subscription
     Properties:
       TopicArn: !Ref GrafanaAlertsTopic
-      Protocol: email
-      Endpoint: !Ref AlertEmail
-
-  CriticalAlertEmailSubscription:
-    Type: AWS::SNS::Subscription
-    Properties:
-      TopicArn: !Ref GrafanaCriticalAlertsTopic
-      Protocol: email
-      Endpoint: !Ref AlertEmail
-
-  HealthCheckEmailSubscription:
-    Type: AWS::SNS::Subscription
-    Properties:
-      TopicArn: !Ref GrafanaHealthCheckTopic
       Protocol: email
       Endpoint: !Ref AlertEmail
 
@@ -97,7 +47,7 @@ Resources:
     Properties:
       Topics:
         - !Ref GrafanaAlertsTopic
-      PolicyText:
+      PolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
@@ -112,27 +62,6 @@ Resources:
             Action:
               - SNS:Publish
             Resource: !Ref GrafanaAlertsTopic
-
-  GrafanaCriticalAlertsTopicPolicy:
-    Type: AWS::SNS::TopicPolicy
-    Properties:
-      Topics:
-        - !Ref GrafanaCriticalAlertsTopic
-      PolicyText:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: cloudwatch.amazonaws.com
-            Action:
-              - SNS:Publish
-            Resource: !Ref GrafanaCriticalAlertsTopic
-          - Effect: Allow
-            Principal:
-              Service: grafana.amazonaws.com
-            Action:
-              - SNS:Publish
-            Resource: !Ref GrafanaCriticalAlertsTopic
 
   # ============================================
   # Store Topic ARNs in Parameter Store
@@ -147,66 +76,9 @@ Resources:
       Tags:
         Environment: !Ref EnvironmentName
 
-  GrafanaCriticalAlertsTopicParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /grafana/sns-topics/critical-alerts
-      Type: String
-      Value: !Ref GrafanaCriticalAlertsTopic
-      Description: SNS Topic ARN for Critical Alerts
-      Tags:
-        Environment: !Ref EnvironmentName
-
-  GrafanaHealthCheckTopicParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /grafana/sns-topics/health-checks
-      Type: String
-      Value: !Ref GrafanaHealthCheckTopic
-      Description: SNS Topic ARN for Health Checks
-      Tags:
-        Environment: !Ref EnvironmentName
-
-  # ============================================
-  # Store Slack Webhook in Secrets Manager (if provided)
-  # ============================================
-  SlackWebhookSecret:
-    Type: AWS::SecretsManager::Secret
-    Condition: SlackWebhookProvided
-    Properties:
-      Name: !Sub "/grafana/slack-webhook-${EnvironmentName}"
-      SecretString: !Sub |
-        {
-          "webhook_url": "${SlackWebhookURL}",
-          "environment": "${EnvironmentName}"
-        }
-      Description: Slack webhook URL for Grafana alerts
-
-Conditions:
-  SlackWebhookProvided: !Not [!Equals [!Ref SlackWebhookURL, ""]]
-
 Outputs:
   GrafanaAlertsTopicArn:
     Description: ARN of Grafana Alerts SNS Topic
     Value: !Ref GrafanaAlertsTopic
     Export:
       Name: !Sub "${AWS::StackName}-GrafanaAlertsTopicArn"
-
-  GrafanaCriticalAlertsTopicArn:
-    Description: ARN of Grafana Critical Alerts SNS Topic
-    Value: !Ref GrafanaCriticalAlertsTopic
-    Export:
-      Name: !Sub "${AWS::StackName}-GrafanaCriticalAlertsTopicArn"
-
-  GrafanaHealthCheckTopicArn:
-    Description: ARN of Grafana Health Check SNS Topic
-    Value: !Ref GrafanaHealthCheckTopic
-    Export:
-      Name: !Sub "${AWS::StackName}-GrafanaHealthCheckTopicArn"
-
-  SlackWebhookSecretArn:
-    Condition: SlackWebhookProvided
-    Description: ARN of Slack Webhook Secret
-    Value: !Ref SlackWebhookSecret
-    Export:
-      Name: !Sub "${AWS::StackName}-SlackWebhookSecretArn"

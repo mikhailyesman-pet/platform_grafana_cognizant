@@ -7,8 +7,6 @@ Parameters:
     Default: dev
     AllowedValues:
       - dev
-      - uat
-      - prod
     Description: Environment name
 
   LogRetentionDays:

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Deploy Grafana Infrastructure using CloudFormation
-# Usage: ./deploy.sh [dev|uat|prod]
+# Deploy Grafana infrastructure using packaged nested CloudFormation templates.
+# Usage: CFN_ARTIFACT_BUCKET=my-bucket GRAFANA_ADMIN_PASSWORD='...' ./deploy.sh
 
 set -e
 
@@ -9,97 +9,52 @@ ENVIRONMENT="${1:-dev}"
 REGION="${AWS_REGION:-us-east-1}"
 STACK_NAME="grafana-observability-${ENVIRONMENT}"
 TEMPLATE_FILE="templates/01-main-stack.yaml"
+PACKAGED_TEMPLATE="packaged-template.yaml"
 PARAMETERS_FILE="parameters/${ENVIRONMENT}-parameters.json"
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-echo -e "${YELLOW}Deploying Grafana Infrastructure${NC}"
-echo "Environment: $ENVIRONMENT"
-echo "Region: $REGION"
-echo "Stack: $STACK_NAME"
-echo "Template: $TEMPLATE_FILE"
-echo "Parameters: $PARAMETERS_FILE"
-echo ""
+if [ -z "$CFN_ARTIFACT_BUCKET" ]; then
+    echo -e "${RED}Error: CFN_ARTIFACT_BUCKET is required for nested stack packaging${NC}"
+    exit 1
+fi
 
-# Validate parameters
+if [ -z "$GRAFANA_ADMIN_PASSWORD" ]; then
+    echo -e "${RED}Error: GRAFANA_ADMIN_PASSWORD must be provided from the shell or secret manager${NC}"
+    exit 1
+fi
+
 if [ ! -f "$PARAMETERS_FILE" ]; then
-    echo -e "${RED}Error: Parameters file not found: $PARAMETERS_FILE${NC}"
+    echo -e "${RED}Error: parameters file not found: $PARAMETERS_FILE${NC}"
     exit 1
 fi
 
-if [ ! -f "$TEMPLATE_FILE" ]; then
-    echo -e "${RED}Error: Template file not found: $TEMPLATE_FILE${NC}"
-    exit 1
-fi
+echo -e "${YELLOW}Packaging CloudFormation templates${NC}"
+aws cloudformation package \
+    --template-file "$TEMPLATE_FILE" \
+    --s3-bucket "$CFN_ARTIFACT_BUCKET" \
+    --output-template-file "$PACKAGED_TEMPLATE" \
+    --region "$REGION"
 
-# Validate CloudFormation template
-echo -e "${YELLOW}Validating CloudFormation template...${NC}"
-aws cloudformation validate-template \
-    --template-body file://$TEMPLATE_FILE \
-    --region $REGION > /dev/null
+PARAMETER_OVERRIDES=$(jq -r '.[] | "\(.ParameterKey)=\(.ParameterValue)"' "$PARAMETERS_FILE")
 
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✓ Template validation passed${NC}"
-else
-    echo -e "${RED}✗ Template validation failed${NC}"
-    exit 1
-fi
-
-# Check if stack exists
-echo -e "${YELLOW}Checking if stack already exists...${NC}"
-STACK_EXISTS=$(aws cloudformation describe-stacks \
+echo -e "${YELLOW}Deploying stack $STACK_NAME${NC}"
+aws cloudformation deploy \
+    --template-file "$PACKAGED_TEMPLATE" \
     --stack-name "$STACK_NAME" \
-    --region $REGION \
-    --query 'Stacks[0].StackId' \
-    --output text 2>/dev/null || echo "")
-
-if [ -n "$STACK_EXISTS" ]; then
-    echo -e "${YELLOW}Stack exists. Updating...${NC}"
-    OPERATION="update-stack"
-    WAIT_CONDITION="stack-update-complete"
-else
-    echo -e "${YELLOW}Stack does not exist. Creating...${NC}"
-    OPERATION="create-stack"
-    WAIT_CONDITION="stack-create-complete"
-fi
-
-# Deploy/Update stack
-echo -e "${YELLOW}Deploying stack...${NC}"
-aws cloudformation $OPERATION \
-    --stack-name "$STACK_NAME" \
-    --template-body file://$TEMPLATE_FILE \
-    --parameters file://$PARAMETERS_FILE \
+    --parameter-overrides $PARAMETER_OVERRIDES GrafanaAdminPassword="$GRAFANA_ADMIN_PASSWORD" \
     --capabilities CAPABILITY_NAMED_IAM \
-    --region $REGION
+    --region "$REGION" \
+    --no-fail-on-empty-changeset
 
-if [ $? -ne 0 ]; then
-    echo -e "${RED}✗ Stack deployment failed${NC}"
-    exit 1
-fi
-
-# Wait for stack operation to complete
-echo -e "${YELLOW}Waiting for stack operation to complete...${NC}"
-aws cloudformation wait $WAIT_CONDITION \
-    --stack-name "$STACK_NAME" \
-    --region $REGION
-
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✓ Stack deployment completed successfully${NC}"
-else
-    echo -e "${RED}✗ Stack deployment failed${NC}"
-    exit 1
-fi
-
-# Get stack outputs
-echo -e "${YELLOW}Stack outputs:${NC}"
+echo -e "${YELLOW}Stack outputs${NC}"
 aws cloudformation describe-stacks \
     --stack-name "$STACK_NAME" \
-    --region $REGION \
+    --region "$REGION" \
     --query 'Stacks[0].Outputs' \
     --output table
 
-echo -e "${GREEN}Deployment completed! ✓${NC}"
+echo -e "${GREEN}Deployment completed successfully${NC}"

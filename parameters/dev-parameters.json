@@ -4,24 +4,8 @@
     "ParameterValue": "dev"
   },
   {
-    "ParameterKey": "GrafanaAdminPassword",
-    "ParameterValue": "DevPassword123!@#"
-  },
-  {
     "ParameterKey": "AlertEmail",
     "ParameterValue": "dev-alerts@example.com"
-  },
-  {
-    "ParameterKey": "SlackWebhookURL",
-    "ParameterValue": ""
-  },
-  {
-    "ParameterKey": "SSOProvider",
-    "ParameterValue": "NONE"
-  },
-  {
-    "ParameterKey": "SSOConfigURL",
-    "ParameterValue": ""
   },
   {
     "ParameterKey": "LogRetentionDays",

@@ -95,7 +95,7 @@ def main():
         try:
             folder = client.create_folder(args.folder)
             folder_id = folder.get('id')
-            print(f"✓ Folder created: {folder['title']} (ID: {folder_id})")
+            print(f"OK: Folder created: {folder['title']} (ID: {folder_id})")
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 409:  # Folder already exists
                 # Try to get existing folder
@@ -104,7 +104,7 @@ def main():
                 folder = next((f for f in folders if f['title'] == args.folder), None)
                 if folder:
                     folder_id = folder['id']
-                    print(f"ℹ Folder already exists: {args.folder} (ID: {folder_id})")
+                    print(f"INFO: Folder already exists: {args.folder} (ID: {folder_id})")
                 else:
                     raise
             else:
@@ -113,12 +113,12 @@ def main():
         # Import dashboards
         dashboards_path = Path(args.dashboards_dir)
         if not dashboards_path.exists():
-            print(f"✗ Dashboards directory not found: {args.dashboards_dir}")
+            print(f"ERROR: Dashboards directory not found: {args.dashboards_dir}")
             sys.exit(1)
 
         dashboard_files = list(dashboards_path.glob('*.json'))
         if not dashboard_files:
-            print(f"✗ No dashboard files found in {args.dashboards_dir}")
+            print(f"ERROR: No dashboard files found in {args.dashboards_dir}")
             sys.exit(1)
 
         print(f"\nFound {len(dashboard_files)} dashboard(s) to import:")
@@ -146,11 +146,11 @@ def main():
                     dashboard['uid'] = dashboard_file.stem
                 
                 result = client.import_dashboard(dashboard, folder_id=folder_id)
-                print(f"✓ Dashboard imported: {result['title']} (URL: {result['url']})")
+                print(f"OK: Dashboard imported: {result['title']} (URL: {result['url']})")
                 successful += 1
 
             except Exception as e:
-                print(f"✗ Failed to import {dashboard_file.name}: {str(e)}")
+                print(f"ERROR: Failed to import {dashboard_file.name}: {str(e)}")
                 failed += 1
 
         # Summary
@@ -161,7 +161,7 @@ def main():
             sys.exit(1)
 
     except Exception as e:
-        print(f"✗ Error: {str(e)}")
+        print(f"ERROR: Error: {str(e)}")
         sys.exit(1)
 
 if __name__ == '__main__':

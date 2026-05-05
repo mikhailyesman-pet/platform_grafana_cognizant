@@ -7,8 +7,6 @@ Parameters:
     Default: dev
     AllowedValues:
       - dev
-      - uat
-      - prod
     Description: Environment name
 
   GrafanaAdminPassword:
@@ -22,28 +20,6 @@ Parameters:
     Type: String
     Description: Email address for alert notifications
     AllowedPattern: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
-
-  SlackWebhookURL:
-    Type: String
-    NoEcho: true
-    Default: ""
-    Description: (Optional) Slack webhook URL for alerts
-
-  SSOProvider:
-    Type: String
-    Default: NONE
-    AllowedValues:
-      - NONE
-      - SAML
-      - OAUTH2_GOOGLE
-      - OAUTH2_GITHUB
-      - OAUTH2_AZURE
-    Description: SSO provider to use for Grafana
-
-  SSOConfigURL:
-    Type: String
-    Default: ""
-    Description: (Optional) SSO configuration URL/endpoint
 
   LogRetentionDays:
     Type: Number
@@ -62,13 +38,10 @@ Metadata:
           default: "Grafana Configuration"
         Parameters:
           - GrafanaAdminPassword
-          - SSOProvider
-          - SSOConfigURL
       - Label:
           default: "Notification Configuration"
         Parameters:
           - AlertEmail
-          - SlackWebhookURL
       - Label:
           default: "CloudWatch Configuration"
         Parameters:
@@ -80,12 +53,6 @@ Metadata:
         default: "Grafana Admin Password"
       AlertEmail:
         default: "Alert Email Address"
-      SlackWebhookURL:
-        default: "Slack Webhook URL (Optional)"
-      SSOProvider:
-        default: "SSO Provider"
-      SSOConfigURL:
-        default: "SSO Configuration URL"
       LogRetentionDays:
         default: "Log Retention Days"
 
@@ -96,8 +63,7 @@ Resources:
   IAMRolesStack:
     Type: AWS::CloudFormation::Stack
     Properties:
-      StackName: !Sub "${AWS::StackName}-iam-roles"
-      TemplateURL: !Sub "file://${AWS::StackId}/../templates/05-iam-roles.yaml"
+      TemplateURL: 05-iam-roles.yaml
       Parameters:
         EnvironmentName: !Ref EnvironmentName
       TimeoutInMinutes: 10
@@ -114,12 +80,10 @@ Resources:
     Type: AWS::CloudFormation::Stack
     DependsOn: IAMRolesStack
     Properties:
-      StackName: !Sub "${AWS::StackName}-sns"
-      TemplateURL: !Sub "file://${AWS::StackId}/../templates/04-sns-stack.yaml"
+      TemplateURL: 04-sns-stack.yaml
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         AlertEmail: !Ref AlertEmail
-        SlackWebhookURL: !Ref SlackWebhookURL
       TimeoutInMinutes: 10
       Tags:
         - Key: Environment
@@ -132,10 +96,8 @@ Resources:
   # ============================================
   CloudWatchStack:
     Type: AWS::CloudFormation::Stack
-    DependsOn: SNSStack
     Properties:
-      StackName: !Sub "${AWS::StackName}-cloudwatch"
-      TemplateURL: !Sub "file://${AWS::StackId}/../templates/03-cloudwatch-stack.yaml"
+      TemplateURL: 03-cloudwatch-stack.yaml
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         LogRetentionDays: !Ref LogRetentionDays
@@ -153,20 +115,14 @@ Resources:
   GrafanaStack:
     Type: AWS::CloudFormation::Stack
     DependsOn:
-      - IAMRolesStack
       - CloudWatchStack
     Properties:
-      StackName: !Sub "${AWS::StackName}-grafana"
-      TemplateURL: !Sub "file://${AWS::StackId}/../templates/02-grafana-stack.yaml"
+      TemplateURL: 02-grafana-stack.yaml
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         GrafanaAdminPassword: !Ref GrafanaAdminPassword
-        SSOProvider: !Ref SSOProvider
-        SSOConfigURL: !Ref SSOConfigURL
-        NotificationChannelEmail: !Ref AlertEmail
+        GrafanaServiceRoleArn: !GetAtt IAMRolesStack.Outputs.GrafanaServiceRoleArn
         LambdaPluginInstallationRoleArn: !GetAtt IAMRolesStack.Outputs.LambdaPluginExecutionRoleArn
-        LambdaSSOSetupRoleArn: !GetAtt IAMRolesStack.Outputs.LambdaSSOExecutionRoleArn
-        LambdaCFNRoleArn: !GetAtt IAMRolesStack.Outputs.LambdaCFNExecutionRoleArn
       TimeoutInMinutes: 30
       Tags:
         - Key: Environment
@@ -186,7 +142,7 @@ Resources:
         {
           "deployment_time": "${AWS::StackName}",
           "environment": "${EnvironmentName}",
-          "sso_provider": "${SSOProvider}",
+          "sso_provider": "AWS_SSO",
           "parent_stack": "${AWS::StackName}",
           "region": "${AWS::Region}",
           "account_id": "${AWS::AccountId}"
@@ -234,12 +190,6 @@ Outputs:
     Value: !GetAtt SNSStack.Outputs.GrafanaAlertsTopicArn
     Export:
       Name: !Sub "${AWS::StackName}-GrafanaAlertsTopicArn"
-
-  GrafanaCriticalAlertsTopicArn:
-    Description: ARN of Grafana Critical Alerts SNS Topic
-    Value: !GetAtt SNSStack.Outputs.GrafanaCriticalAlertsTopicArn
-    Export:
-      Name: !Sub "${AWS::StackName}-GrafanaCriticalAlertsTopicArn"
 
   # ============================================
   # CloudWatch Stack Outputs

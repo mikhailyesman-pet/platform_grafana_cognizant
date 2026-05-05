@@ -29,10 +29,10 @@ for template in $TEMPLATES_DIR/*.yaml; do
     
     # Run cfn-lint
     if cfn-lint "$template" -f pretty -i W; then
-        echo -e "${GREEN}✓ $template is valid${NC}"
+        echo -e "${GREEN}OK: $template is valid${NC}"
         ((PASSED++))
     else
-        echo -e "${RED}✗ $template has errors${NC}"
+        echo -e "${RED}ERROR: $template has errors${NC}"
         ((FAILED++))
     fi
     echo ""
@@ -50,10 +50,10 @@ if aws sts get-caller-identity &> /dev/null; then
             --template-body file://$template \
             --query 'Description' \
             --output text > /dev/null; then
-            echo -e "${GREEN}✓ AWS validation passed${NC}"
+            echo -e "${GREEN}OK: AWS validation passed${NC}"
             ((PASSED++))
         else
-            echo -e "${RED}✗ AWS validation failed${NC}"
+            echo -e "${RED}ERROR: AWS validation failed${NC}"
             ((FAILED++))
         fi
         echo ""
@@ -70,10 +70,10 @@ for params in parameters/*.json; do
     echo -e "${YELLOW}Checking $params...${NC}"
     
     if jq . "$params" > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ Valid JSON: $params${NC}"
+        echo -e "${GREEN}OK: Valid JSON: $params${NC}"
         ((PASSED++))
     else
-        echo -e "${RED}✗ Invalid JSON: $params${NC}"
+        echo -e "${RED}ERROR: Invalid JSON: $params${NC}"
         ((FAILED++))
     fi
     echo ""
@@ -86,9 +86,9 @@ echo "Failed: $FAILED"
 echo ""
 
 if [ $FAILED -eq 0 ]; then
-    echo -e "${GREEN}All validations passed! ✓${NC}"
+    echo -e "${GREEN}All validations passed! OK:${NC}"
     exit 0
 else
-    echo -e "${RED}Some validations failed! ✗${NC}"
+    echo -e "${RED}Some validations failed! ERROR:${NC}"
     exit 1
 fi
